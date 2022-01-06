@@ -4,7 +4,7 @@
 
 ## About
 
-This is a prototype for Koru, a parametrized monetary system consisting of:
+This is a prototype for Koru, a parametrized p2p monetary system consisting of:
 - Mutual credit
 - Voting and decision making platform (for economic governance)
 - Open credit scoring (Reputation)
