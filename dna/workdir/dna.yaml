@@ -1,0 +1,11 @@
+---
+manifest_version: "1"
+name: koru-dna
+uuid: 00000000-0000-0000-0000-000000000000
+properties: ~
+zomes: 
+  - name: mutual_credit
+    bundled: ../../target/wasm32-unknown-unknown/release/mutual_credit.wasm
+  - name: voting
+    bundled: ../../target/wasm32-unknown-unknown/release/voting.wasm
+
