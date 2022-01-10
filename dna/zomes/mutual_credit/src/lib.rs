@@ -32,33 +32,26 @@ entry_defs![
     Anchor::entry_def()
 ];
 
-const CREDIT_LIMIT: f32 = -1000.0;
+const CREDIT_LIMIT: f32 = -1000.0; // credit limit is hardcoded for now
 
 
 #[hdk_extern]
 pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<ValidateCallbackResult>{
 
 
-    //unwrap
+    //unwrap to be validated entry
     let curr_elem = v.element.entry().as_option().ok_or(WasmError::Guest("failed to fetch entry from element".into()))?;
 
-    let curr_tx = match curr_elem {
-        Entry::CounterSign(_cs_data,cs_app) => {
-            Transaction::try_from(SerializedBytes::from(cs_app.to_owned())).map_err(|err| WasmError::Guest(format!("Could not deserialize current element: {:?}", err)))
-        },
-        _ => Err(WasmError::Guest("Failed to open current element while validating".into()))
-    }?;
+    let curr_tx = extract_tx_from_cs_entry(curr_elem.clone())?;
 
-
-
-
-
+    
+    // unwrap validation package and calculate balance for all transactions
     let val_pck = v.validation_package.ok_or(
                                     WasmError::Guest(String::from("Error fetching validation package")))?;
 
     let elems = val_pck.0;
-    
-    info!("validating!");
+
+
 
     let mut sums:HashMap<AgentPubKey,f32> = HashMap::new();
     //let mut contents: Vec<Transaction> = vec![];
@@ -67,25 +60,22 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
         let countersign = ent.ok_or(
             WasmError::Guest("unable to unwrap entry".into()))?;
         
-        match countersign {
-                Entry::CounterSign(_cs_data,cs_app) => {
-                    let q: Transaction = Transaction::try_from(SerializedBytes::from(cs_app.to_owned()))?;
 
-                    let origin = sums.entry(q.originater.clone()).or_insert(0.0);
-                    *origin -= q.amount.clone();
+        let tx = extract_tx_from_cs_entry(countersign.clone())?;
 
-                    let recip = sums.entry(q.recepient.clone()).or_insert(0.0);
-                    *recip += q.amount.clone();
-  
-                },
-                _ => debug!("validating non countersign entries?"),
-            }
-    
+        let origin = sums.entry(tx.originater.clone()).or_insert(0.0);
+        *origin -= tx.amount.clone();
+
+        let recip = sums.entry(tx.recepient.clone()).or_insert(0.0);
+        *recip += tx.amount.clone();
+
 
         
     }
     
-    info!("{:?}",sums);
+    //debug !("validating with data:{:?}",sums);
+
+
 
     if !sums.is_empty() {
         let temp = sums.get(&curr_tx.originater).ok_or(WasmError::Guest).map_err(|_| WasmError::Guest("error fetching sums from hashmap".into()))?;
@@ -123,33 +113,13 @@ fn init(_: ()) -> ExternResult<InitCallbackResult> {
     Ok(InitCallbackResult::Pass)
 }
 
-#[hdk_extern]
-pub fn transact(tx_in:TxInput) -> ExternResult<HeaderHash>{
-    info!("sending {}",tx_in.amount);
-
-    let self_id = agent_info()?.agent_latest_pubkey;
-    let self_pubkey: AgentPubKey = AgentPubKey::from(self_id);
-
-
-    // secure timestamp fetching is in the works. timestamp below is insecure. see https://docs.rs/hdk/0.0.115/hdk/time/fn.sys_time.html
-    // this fetches time on the host, therefore a host can easily change system clock to trick the system
-    let timestamp: i64 = hdk::time::sys_time()?.as_millis();
-    let entry = Transaction{
-        originater: self_pubkey,
-        recepient: tx_in.recepient,
-        amount: tx_in.amount,
-        timestamp: timestamp // kinda useless now with countersigning
-    };
-    create_entry(&entry)
-}
 
 #[hdk_extern]
 pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
     let self_id = agent_info()?.agent_latest_pubkey;
     let self_pubkey: AgentPubKey = AgentPubKey::from(self_id);
-    info!("{:?} initiating tx countersign", self_pubkey.clone());
+
     
-    info!("{:?}",tx_in);
     let timestamp: i64 = hdk::time::sys_time()?.as_millis();
     let entry = Transaction{ //should rename to tx
         originater: self_pubkey,
@@ -158,16 +128,18 @@ pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
         timestamp: timestamp
     };
 
-    info!("building preflight");
+    //debug!("transaction started {:?}",entry);
+
+    //debug!("building preflight");
     let preflight_req = build_preflight(entry.clone())?;
 
     // sender locks the source chain
-    info!("sender locking source chain");
+    //debug!("sender locking source chain");
     let my_response = match accept_countersigning_preflight_request(preflight_req)? {
         PreflightRequestAcceptance::Accepted(response) => Ok(response),
-        _ => Err(WasmError::Guest(
-            "There was an error when building the preflight_request for the transaction".into(),
-        )),
+        PreflightRequestAcceptance::UnacceptableFutureStart => Err(WasmError::Guest("Start time too far into the future".into())),
+        PreflightRequestAcceptance::UnacceptableAgentNotFound => Err(WasmError::Guest("Countersigning agent not found".into())),
+        PreflightRequestAcceptance::Invalid(e) => Err(WasmError::Guest(format!("Invalid preflight {}",e)))
     }?;
 
 
@@ -179,13 +151,13 @@ pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
         my_response.clone(),
     )?;
 
-    info!("received response");
+    //debug!("received response");
 
     match call_remote_result {
         ZomeCallResponse::Ok(z_response) => match z_response.decode::<PreflightResponse>()?        
         {
              cs_response => { 
-                 info!("creating countersigned entry");
+                info!("creating countersigned entry");
 
                 let headhash = create_countersign_tx(entry, vec![my_response,cs_response])?;
 
@@ -194,17 +166,14 @@ pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
             
             }
         },
-        ZomeCallResponse::Unauthorized(..) => {
-            info!("unauthorized zome call, missing cap grant");
-            Err(WasmError::Guest("unauthorized due to missing cap grant".into()))
+        ZomeCallResponse::Unauthorized(cell,zome,func,agent) => {
+            Err(WasmError::Guest(format!("{} is unauthorized for calling {} in {}:{}", agent,func,zome,cell)))
         },
-        ZomeCallResponse::CountersigningSession(_err_str) => {
-            info!("zome call countersign failed");
-            Err(WasmError::Guest("remote call failed".into()))
+        ZomeCallResponse::CountersigningSession(e) => {
+            Err(WasmError::Guest(format!("remote call for countersign failed: {}", e)))
         },
-        ZomeCallResponse::NetworkError(_err_str) => {
-            info!("zome call network error failed {}", _err_str);
-            Err(WasmError::Guest("remote call failed".into()))
+        ZomeCallResponse::NetworkError(e) => {
+            Err(WasmError::Guest(format!("network error during remote call: {}", e)))
         }
     }
 
@@ -253,27 +222,24 @@ fn build_preflight(tx:Transaction) -> Result<PreflightRequest,WasmError>{
 #[hdk_extern]
 pub fn handle_preflight_req(cp_preflight_resp: PreflightResponse) -> ExternResult<PreflightResponse> {
    
-    info!("preflight request received, validating...");
+    //debug!("preflight request received, validating...");
 
     let req = cp_preflight_resp.request();
 
-    //how can we have safer decoding?
+
     let tx: Transaction = SerializedBytes::from(UnsafeBytes::from(req.preflight_bytes().0.clone())).try_into()?;
 
-    //validate tx
+    //validate tx will raise error if something is wrong
+    validate_tx(cp_preflight_resp.clone(),tx.clone())?;
 
-
-
-    let _validation = validate_tx(cp_preflight_resp.clone(),tx.clone());
-
-    // need to handle validation result. For now its always valid
-
-    // need to check if hash is outdated
+    // need to check if hash is outdated?
 
     let self_response = match accept_countersigning_preflight_request(req.clone())?{
         PreflightRequestAcceptance::Accepted(response) => Ok(response),
-        _ => Err(WasmError::Guest("Error accepting preflight countersign".into()))
-    }?; // match to all variants for detailed error handling and debugging
+        PreflightRequestAcceptance::UnacceptableFutureStart => Err(WasmError::Guest("Start time too far into the future".into())),
+        PreflightRequestAcceptance::UnacceptableAgentNotFound => Err(WasmError::Guest("Countersigning agent not found".into())),
+        PreflightRequestAcceptance::Invalid(e) => Err(WasmError::Guest(format!("Invalid preflight {}",e)))
+    }?;
 
 
     let responses = vec![cp_preflight_resp, self_response.clone()];
@@ -290,12 +256,6 @@ pub fn create_countersign_tx(tx:Transaction,responses:Vec<PreflightResponse>) ->
         |cs_err| WasmError::Guest(cs_err.to_string()))?;
     let entry = Entry::CounterSign(Box::new(session_data),tx.clone().try_into()?);
 
-    let _ehash = hash_entry(entry.clone())?;
-
-    
-
-    
-
     let res = HDK.with(|h| {
         h.borrow().create(CreateInput::new(
             (&tx).into(),
@@ -309,17 +269,102 @@ pub fn create_countersign_tx(tx:Transaction,responses:Vec<PreflightResponse>) ->
     Ok(res)
 }
 
-fn validate_tx(preflight:PreflightResponse,_tx:Transaction) -> bool {
-    // need sender's source chain, self source chain and DHT
-    
+fn validate_tx(preflight:PreflightResponse,_tx:Transaction) -> ExternResult<bool> {
 
-    let a_s = preflight.agent_state();
-    info!("{:?}", a_s.chain_top());
+    let a_state= preflight.agent_state();
+    let mut headhash = a_state.chain_top();
 
+
+    //for debugging
+    let mut cs_source_txs :Vec<Transaction> = vec![];
+
+    let opt_elem = get(headhash.clone(),GetOptions::latest())?;
+
+    // opt_elem provides None for InitZomeComplete header, shouldnt it at least return a header instead of returning None?
+    let mut elem = opt_elem.ok_or(WasmError::Guest("Error fetching entry from countersign state chain_top hash".into()))?;
+
+    let mut credit_sum:f32 = 0.0;
+
+    while elem.header().header_type() != HeaderType::Dna {
+
+
+        match elem.header() {
+            Header::Create(_) => {
+                let entry = elem.entry().as_option().ok_or(WasmError::Guest("failed to fetch entry from element".into()))?;
+                let tx = extract_tx_from_cs_entry(entry.clone());
+
+                match tx {
+                    Ok(tx) => {
+                        
+                        let author = elem.header().author().clone();
+                        if  author == tx.originater {
+                            credit_sum -= tx.amount;
+                        }
+                        else if author == tx.recepient {
+                             credit_sum += tx.amount;
+                        }
+
+                        cs_source_txs.push(tx);
+                    },
+                    _ => ()
+                };   
+
+            },
+            _ => (),
+        };
+
+        headhash = elem.header().prev_header().ok_or(WasmError::Guest("error fetching previous header".into()))?;
+        let opt_elem = get(headhash.clone(),GetOptions::latest())?;
+        elem = opt_elem.ok_or(WasmError::Guest("Error fetching entry from countersign state chain_top hash".into()))?;
+            
+    }
+
+
+    debug!("Balance is at {}",credit_sum);
+
+    if credit_sum < CREDIT_LIMIT {
+
+        debug!("sender surpasses credit limit in cs validate");
+        return Ok(false)
+    }
 
     // check tx timestamp is within countersign session timestamp
-    true
+    Ok(true)
 
+}
+/*
+fn recursive_walk_sourcechain(in_vector:&mut Vec<Transaction>, headhash:HeaderHash) -> ExternResult<()> {
+
+    debug!("calling recursive walk");
+    let opt_elem = get(headhash.clone(),GetOptions::latest())?;
+    let elem = opt_elem.ok_or(WasmError::Guest("Error fetching entry from countersign state chain_top hash".into()))?;
+
+    let entry = elem.entry().as_option().ok_or(WasmError::Guest("failed to fetch entry from element".into()))?;
+
+
+    let tx = extract_tx_from_cs_entry(entry.clone());
+
+    match tx {
+        Ok(tx) => in_vector.push(tx),
+        _ => debug!("tried to extract tx from non countersign entry")
+    }   
+
+    let prev_head = elem.header().prev_header().ok_or(WasmError::Guest("error fetching previous header".into()))?;
+
+    recursive_walk_sourcechain(in_vector, prev_head.clone())
+}
+
+*/
+
+fn extract_tx_from_cs_entry(cs_entry: Entry) -> ExternResult<Transaction> {
+    
+    match cs_entry {
+            Entry::CounterSign(_cs_data,cs_app) => {
+               Ok(Transaction::try_from(SerializedBytes::from(cs_app.to_owned()))?)
+
+            },
+            _ => Err(WasmError::Guest("Error extracting tx from countersign entry: not of type Entry::CounterSign".into())),
+        }
 }
 /*
 
