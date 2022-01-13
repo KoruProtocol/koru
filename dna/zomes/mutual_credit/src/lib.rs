@@ -5,19 +5,19 @@ use std::collections::HashMap;
 
 
 #[hdk_entry(id = "transaction", 
-            required_validations = 20, 
+            required_validations = 2, 
             required_validation_type = "sub_chain" )]
 #[derive(Clone)]
 pub struct Transaction{
     originater: AgentPubKey,
     recepient: AgentPubKey,
     amount: f32,
-    timestamp: i64
+    balance: f32
 }
 
 impl fmt::Display for Transaction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}---{}--->{} @ {}", self.originater,self.amount, self.recepient,self.timestamp)
+        write!(f, "{}---{}--->{}", self.originater.to_string(),self.amount, self.recepient.to_string())
     }
 }
 
@@ -32,7 +32,10 @@ entry_defs![
     Anchor::entry_def()
 ];
 
-const CREDIT_LIMIT: f32 = -1000.0; // credit limit is hardcoded for now
+const CREDIT_LIMIT: f32 = -100.0; // credit limit is hardcoded for now
+
+
+
 
 
 #[hdk_extern]
@@ -50,9 +53,12 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
                                     WasmError::Guest(String::from("Error fetching validation package")))?;
 
     let elems = val_pck.0;
+    
+    //whose source chain are we looking at?
+    let temp = v.element.header().author();
+    
 
-
-
+    //validation type: sub_chain provides entry authors source chain entries.
     let mut sums:HashMap<AgentPubKey,f32> = HashMap::new();
     //let mut contents: Vec<Transaction> = vec![];
     for e in elems {
@@ -72,15 +78,20 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
 
         
     }
-    
-    //debug !("validating with data:{:?}",sums);
 
 
 
     if !sums.is_empty() {
-        let temp = sums.get(&curr_tx.originater).ok_or(WasmError::Guest).map_err(|_| WasmError::Guest("error fetching sums from hashmap".into()))?;
-        if ( temp - curr_tx.amount) < CREDIT_LIMIT {
-            info!("{}",temp - curr_tx.amount);
+        let sender_sum = match sums.get(&curr_tx.originater) {
+            Some(sender_sum) => sender_sum.clone(),
+            None => 0.0 // recepient never transacted with sender, no prior history. So here we assume the sender has a balance of 0.
+        };
+        debug !("validating for author: {:?} with a balance of {}",temp,sender_sum - curr_tx.amount);
+    
+
+    
+        if ( sender_sum - curr_tx.amount) < CREDIT_LIMIT {
+            info!("{}",sender_sum - curr_tx.amount);
             return Ok(ValidateCallbackResult::Invalid("Sender's credit limit exceeded".into()))
         }
 
@@ -119,16 +130,29 @@ pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
     let self_id = agent_info()?.agent_latest_pubkey;
     let self_pubkey: AgentPubKey = AgentPubKey::from(self_id);
 
-    
-    let timestamp: i64 = hdk::time::sys_time()?.as_millis();
-    let entry = Transaction{ //should rename to tx
-        originater: self_pubkey,
-        recepient: tx_in.recepient,
-        amount: tx_in.amount,
-        timestamp: timestamp
-    };
 
-    //debug!("transaction started {:?}",entry);
+    let latest_tx = get_latest_sc_tx()?;
+
+    let entry = match latest_tx {
+        Some(prev_tx) => {
+            Transaction{ //should rename to tx
+                originater: self_pubkey,
+                recepient: tx_in.recepient,
+                amount: tx_in.amount,
+                balance: prev_tx.balance - tx_in.amount
+            }
+        },
+        None => {
+            Transaction{ //should rename to tx
+                originater: self_pubkey,
+                recepient: tx_in.recepient,
+                amount: tx_in.amount,
+                balance: -1.0 * tx_in.amount
+            }
+        }
+    };
+    
+    debug!("transaction started {:?}",entry);
 
     //debug!("building preflight");
     let preflight_req = build_preflight(entry.clone())?;
@@ -229,8 +253,8 @@ pub fn handle_preflight_req(cp_preflight_resp: PreflightResponse) -> ExternResul
 
     let tx: Transaction = SerializedBytes::from(UnsafeBytes::from(req.preflight_bytes().0.clone())).try_into()?;
 
-    //validate tx will raise error if something is wrong
-    validate_tx(cp_preflight_resp.clone(),tx.clone())?;
+    //Optional counterparty validation. Not needed due to peer validation, currently 
+    //validate_tx(cp_preflight_resp.clone(),tx.clone())?;
 
     // need to check if hash is outdated?
 
@@ -269,6 +293,7 @@ pub fn create_countersign_tx(tx:Transaction,responses:Vec<PreflightResponse>) ->
     Ok(res)
 }
 
+/*
 fn validate_tx(preflight:PreflightResponse,_tx:Transaction) -> ExternResult<bool> {
 
     let a_state= preflight.agent_state();
@@ -281,6 +306,9 @@ fn validate_tx(preflight:PreflightResponse,_tx:Transaction) -> ExternResult<bool
     let opt_elem = get(headhash.clone(),GetOptions::latest())?;
 
     // opt_elem provides None for InitZomeComplete header, shouldnt it at least return a header instead of returning None?
+    // initzomecomplete created on remote zome calls. Can make arbitrary call to trigger initzome.
+    // this validation function makes too many get calls, leave validation to peer validation (instead of countersign)
+    // hashbound sourcechain query - upcoming
     let mut elem = opt_elem.ok_or(WasmError::Guest("Error fetching entry from countersign state chain_top hash".into()))?;
 
     let mut credit_sum:f32 = 0.0;
@@ -332,29 +360,8 @@ fn validate_tx(preflight:PreflightResponse,_tx:Transaction) -> ExternResult<bool
     Ok(true)
 
 }
-/*
-fn recursive_walk_sourcechain(in_vector:&mut Vec<Transaction>, headhash:HeaderHash) -> ExternResult<()> {
-
-    debug!("calling recursive walk");
-    let opt_elem = get(headhash.clone(),GetOptions::latest())?;
-    let elem = opt_elem.ok_or(WasmError::Guest("Error fetching entry from countersign state chain_top hash".into()))?;
-
-    let entry = elem.entry().as_option().ok_or(WasmError::Guest("failed to fetch entry from element".into()))?;
-
-
-    let tx = extract_tx_from_cs_entry(entry.clone());
-
-    match tx {
-        Ok(tx) => in_vector.push(tx),
-        _ => debug!("tried to extract tx from non countersign entry")
-    }   
-
-    let prev_head = elem.header().prev_header().ok_or(WasmError::Guest("error fetching previous header".into()))?;
-
-    recursive_walk_sourcechain(in_vector, prev_head.clone())
-}
-
 */
+
 
 fn extract_tx_from_cs_entry(cs_entry: Entry) -> ExternResult<Transaction> {
     
@@ -366,11 +373,28 @@ fn extract_tx_from_cs_entry(cs_entry: Entry) -> ExternResult<Transaction> {
             _ => Err(WasmError::Guest("Error extracting tx from countersign entry: not of type Entry::CounterSign".into())),
         }
 }
-/*
 
-// may need to use this for post countersign linking
-#[hdk_extern(infallible)]
-pub fn link_tx(schedule: Option<Schedule>) -> Option<Schedule> {
+
+fn get_latest_sc_tx() -> ExternResult<Option<Transaction>> {
+    // get the most recent transaction to compute the new account balance
+    let filter = ChainQueryFilter::new()
+    .include_entries(true)
+    .entry_type(EntryType::App(AppEntryType::new(
+        entry_def_index!(Transaction)?,
+        zome_info()?.id,
+        EntryVisibility::Public,
+    )));
+
+    let mut res = query(filter)?;
+    //info!("{:?}",res);
+    let temp = res.pop();
+    match temp {
+        Some(elem) => {
+            let elem_entry = elem.entry();
+            let temp = elem_entry.as_option().ok_or(WasmError::Guest(format!("Error unwrapping element into entry: {:?}",&elem)))?;
+            let tx = extract_tx_from_cs_entry(temp.clone())?;
+            Ok(Some(tx))},
+        None => Ok(None)
+    }
 
 }
-*/

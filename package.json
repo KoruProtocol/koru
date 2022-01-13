@@ -17,7 +17,7 @@
     "build:dnas": "npm run build:zomes && hc dna pack ./dna/workdir",
     "build:zomes": "CARGO_TARGET_DIR=target cargo build --release --target wasm32-unknown-unknown",
     "playground": "holochain-playground",
-    "run_sbx": "RUST_LOG=warn hc s generate ./workdir/koru.happ --run=8888 -n 2 network mdns",
+    "run_sbx": "RUST_LOG=warn hc s generate ./workdir/koru.happ --run -n 5 network mdns",
     "run_backend": "hc s clean && npm run build:happ && npm run run_sbx"
   },
   "devDependencies": {
