@@ -38,7 +38,10 @@ async function main(){
   n_trials = 100
   for (let i = 0 ; i < n_trials; i++){
     let a_i = between(0,aws_list.length-1);
-    let b_i = between(0,aws_list.length-1)
+    let b_i = between(0,aws_list.length-1);
+    while (a_i == b_i) {
+      b_i = between(0,aws_list.length-1);
+    }
     let amt = between(0,100)
     console.log("%i ---> %i ---> %i",a_i,amt,b_i)
     let res = await call_transaction(aws_list[a_i],admin_cells[a_i][0],admin_cells[b_i],amt)
@@ -89,6 +92,17 @@ function between(min, max) {
   return Math.floor(
     Math.random() * (max - min + 1) + min
   )
+}
+
+function shuffle(a) {
+  var j, x, i;
+  for (i = a.length - 1; i > 0; i--) {
+      j = Math.floor(Math.random() * (i + 1));
+      x = a[i];
+      a[i] = a[j];
+      a[j] = x;
+  }
+  return a;
 }
 async function call_transaction(aws,originator_cell,recipient_cell,amt) {
 

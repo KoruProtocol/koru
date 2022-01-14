@@ -9,21 +9,21 @@ use std::collections::HashMap;
             required_validation_type = "sub_chain" )]
 #[derive(Clone)]
 pub struct Transaction{
-    originater: AgentPubKey,
-    recepient: AgentPubKey,
+    sender: AgentPubKey,
+    receiver: AgentPubKey,
     amount: f32,
     balance: f32
 }
 
 impl fmt::Display for Transaction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}---{}--->{}", self.originater.to_string(),self.amount, self.recepient.to_string())
+        write!(f, "{}---{}--->{}", self.sender.to_string(),self.amount, self.receiver.to_string())
     }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TxInput{
-    recepient: AgentPubKey,
+    receiver: AgentPubKey,
     amount:f32
 }
 
@@ -32,7 +32,7 @@ entry_defs![
     Anchor::entry_def()
 ];
 
-const CREDIT_LIMIT: f32 = -100.0; // credit limit is hardcoded for now
+const CREDIT_LIMIT: f32 = -1000.0; // credit limit is hardcoded for now
 
 
 
@@ -55,7 +55,7 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
     let elems = val_pck.0;
     
     //whose source chain are we looking at?
-    let temp = v.element.header().author();
+    //let temp = v.element.header().author();
     
 
     //validation type: sub_chain provides entry authors source chain entries.
@@ -69,30 +69,27 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
 
         let tx = extract_tx_from_cs_entry(countersign.clone())?;
 
-        let origin = sums.entry(tx.originater.clone()).or_insert(0.0);
+        let origin = sums.entry(tx.sender.clone()).or_insert(0.0);
         *origin -= tx.amount.clone();
 
-        let recip = sums.entry(tx.recepient.clone()).or_insert(0.0);
+        let recip = sums.entry(tx.receiver.clone()).or_insert(0.0);
         *recip += tx.amount.clone();
-
-
-        
     }
 
 
 
     if !sums.is_empty() {
-        let sender_sum = match sums.get(&curr_tx.originater) {
+        let sender_sum = match sums.get(&curr_tx.sender) {
             Some(sender_sum) => sender_sum.clone(),
-            None => 0.0 // recepient never transacted with sender, no prior history. So here we assume the sender has a balance of 0.
+            None => 0.0 
+            // receiver never transacted with sender, no prior history. So here we assume the sender has a balance of 0. Peer validation is done 2x in this case for recipient and sender.
         };
-        debug !("validating for author: {:?} with a balance of {}",temp,sender_sum - curr_tx.amount);
+        //debug !("validating for author: {:?} with a balance of {}",temp,sender_sum - curr_tx.amount);
     
 
     
         if ( sender_sum - curr_tx.amount) < CREDIT_LIMIT {
-            info!("{}",sender_sum - curr_tx.amount);
-            return Ok(ValidateCallbackResult::Invalid("Sender's credit limit exceeded".into()))
+            return Ok(ValidateCallbackResult::Invalid(format!("Sender's credit limit of {} exceeded: {}",CREDIT_LIMIT, sender_sum - curr_tx.amount)))
         }
 
     }
@@ -136,23 +133,23 @@ pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
     let entry = match latest_tx {
         Some(prev_tx) => {
             Transaction{ //should rename to tx
-                originater: self_pubkey,
-                recepient: tx_in.recepient,
+                sender: self_pubkey,
+                receiver: tx_in.receiver,
                 amount: tx_in.amount,
                 balance: prev_tx.balance - tx_in.amount
             }
         },
         None => {
             Transaction{ //should rename to tx
-                originater: self_pubkey,
-                recepient: tx_in.recepient,
+                sender: self_pubkey,
+                receiver: tx_in.receiver,
                 amount: tx_in.amount,
                 balance: -1.0 * tx_in.amount
             }
         }
     };
     
-    debug!("transaction started {:?}",entry);
+    //  debug!("transaction started {:?}",entry);
 
     //debug!("building preflight");
     let preflight_req = build_preflight(entry.clone())?;
@@ -168,7 +165,7 @@ pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
 
 
     let call_remote_result = call_remote(
-        entry.recepient.clone(),
+        entry.receiver.clone(),
         zome_info()?.name,
         FunctionName("handle_preflight_req".into()),
         None,
@@ -221,8 +218,8 @@ fn build_preflight(tx:Transaction) -> Result<PreflightRequest,WasmError>{
     let header_base = HeaderBase::Create(CreateBase::new(entry_type));
 
     let countersign_agents = vec![
-            (tx.originater.clone() ,vec![]),
-            (tx.recepient.clone() ,vec![])
+            (tx.sender.clone() ,vec![]),
+            (tx.receiver.clone() ,vec![])
             ];
 
     let bytes = SerializedBytes::try_from(tx.clone())?;
@@ -293,6 +290,10 @@ pub fn create_countersign_tx(tx:Transaction,responses:Vec<PreflightResponse>) ->
     Ok(res)
 }
 
+#[hdk_extern]
+pub fn get_dht_entry(hash:AnyDhtHash) -> ExternResult<Option<Element>> {
+    get(hash, GetOptions::latest())
+}
 /*
 fn validate_tx(preflight:PreflightResponse,_tx:Transaction) -> ExternResult<bool> {
 
@@ -325,10 +326,10 @@ fn validate_tx(preflight:PreflightResponse,_tx:Transaction) -> ExternResult<bool
                     Ok(tx) => {
                         
                         let author = elem.header().author().clone();
-                        if  author == tx.originater {
+                        if  author == tx.sender {
                             credit_sum -= tx.amount;
                         }
-                        else if author == tx.recepient {
+                        else if author == tx.receiver {
                              credit_sum += tx.amount;
                         }
 
