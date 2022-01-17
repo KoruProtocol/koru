@@ -113,7 +113,7 @@ async function call_transaction(aws,originator_cell,recipient_cell,amt) {
       zome_name: 'mutual_credit',
       fn_name: 'countersign_tx',
       payload: {
-        recepient: recipient_cell[0][1],
+        receiver: recipient_cell[0][1],
         amount: amt
       },
       provenance: originator_cell[1],
