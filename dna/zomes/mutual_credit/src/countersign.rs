@@ -1,6 +1,6 @@
 use hdk::prelude::*;
 use std::fmt;
-use crate::utils::get_latest_sc_tx;
+use crate::utils::{get_sourcechain_balance,get_other_sc_balance};
 
 
 
@@ -13,7 +13,8 @@ pub struct Transaction{
     pub sender: AgentPubKey,
     pub receiver: AgentPubKey,
     pub amount: f32,
-    pub sender_balance: f32
+    pub sender_balance: f32,
+    pub receiver_balance: f32
 }
 
 impl fmt::Display for Transaction {
@@ -33,22 +34,35 @@ pub struct TxInput{
 
 
 
-
-
 #[hdk_extern]
 pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
     let self_id = agent_info()?.agent_latest_pubkey;
     let self_pubkey: AgentPubKey = AgentPubKey::from(self_id);
 
-    let latest_tx = get_latest_sc_tx()?; //latest tx on sender's source chain
+    //let latest_tx = get_latest_sc_tx()?; //latest tx on sender's source chain
 
+    // balance calculation is incorrect. when calculating balance, we dont take into account received credits AND we use sender's balance which in the case of tx reception is not the current author
+    
+    let self_balance = get_sourcechain_balance(())?;
+    let other_balance = get_other_sc_balance(tx_in.receiver.clone())?;
+
+    let entry = Transaction {
+        sender: self_pubkey,
+        receiver: tx_in.receiver,
+        amount: tx_in.amount,
+        sender_balance: self_balance - tx_in.amount,
+        receiver_balance: other_balance + tx_in.amount
+    };
+
+    /*
     let entry = match latest_tx {
         Some(prev_tx) => {
             Transaction{ //should rename to tx
                 sender: self_pubkey,
                 receiver: tx_in.receiver,
                 amount: tx_in.amount,
-                sender_balance: prev_tx.sender_balance - tx_in.amount
+                sender_balance: prev_tx.sender_balance - tx_in.amount,
+                receiver_balance: 0.0
             }
         },
         None => {
@@ -56,11 +70,12 @@ pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
                 sender: self_pubkey,
                 receiver: tx_in.receiver,
                 amount: tx_in.amount,
-                sender_balance: -1.0 * tx_in.amount
+                sender_balance: -1.0 * tx_in.amount,
+                receiver_balance: 0.0
             }
         }
     };
-    
+    */
     //  debug!("transaction started {:?}",entry);
 
     //debug!("building preflight");
@@ -161,6 +176,9 @@ pub fn handle_preflight_req(cp_preflight_resp: PreflightResponse) -> ExternResul
 
 
     let tx: Transaction = SerializedBytes::from(UnsafeBytes::from(req.preflight_bytes().0.clone())).try_into()?;
+
+
+    //tx.receiver_balance = 99.9;
 
     //Optional counterparty validation. Not needed due to peer validation, currently 
     //validate_tx(cp_preflight_resp.clone(),tx.clone())?;

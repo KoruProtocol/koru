@@ -25,7 +25,7 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
     let elems = val_pck.0;
     
     //whose source chain are we looking at?
-    //let temp = v.element.header().author();
+    let author = v.element.header().author().clone();
     
 
     //validation type: sub_chain provides entry authors source chain entries.
@@ -48,21 +48,43 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
 
 
 
+
     if !sums.is_empty() {
-        let sender_sum = match sums.get(&curr_tx.sender) {
-            Some(sender_sum) => sender_sum.clone(),
-            None => 0.0 
-            // receiver never transacted with sender, no prior history. So here we assume the sender has a balance of 0. Peer validation is done 2x in this case for recipient and sender.
+
+        // receiver never transacted with sender, no prior history. So here we assume the sender has a balance of 0. Peer validation is done 2x in this case for recipient and sender.
+        let source_sum = match sums.get(&author) {
+            Some(val) => val.clone(),
+            None => 0.0
         };
+
+
+
         //debug !("validating for author: {:?} with a balance of {}",temp,sender_sum - curr_tx.amount);
-    
-        if (sender_sum - curr_tx.amount) != curr_tx.sender_balance {
-            info!("peer calculated sender balance != sender balance ({} != {})",sender_sum,curr_tx.sender_balance);
-        }
-    
-        if ( sender_sum - curr_tx.amount) < CREDIT_LIMIT {
-            return Ok(ValidateCallbackResult::Invalid(format!("Sender's credit limit of {} exceeded: {}",CREDIT_LIMIT, sender_sum - curr_tx.amount)))
-        }
+        if author == curr_tx.sender {
+
+            let peer_balance = source_sum - curr_tx.amount;
+            if peer_balance != curr_tx.sender_balance {
+
+                return Ok(ValidateCallbackResult::Invalid(format!("Sender balance doesn't match peers ({} != {})",
+                    peer_balance,curr_tx.sender_balance
+                    )))
+
+            }
+
+            if peer_balance < CREDIT_LIMIT {
+                return Ok(ValidateCallbackResult::Invalid(format!("Sender's credit limit of {} exceeded: {}",CREDIT_LIMIT, source_sum - curr_tx.amount)))
+            }
+        } else if author == curr_tx.receiver {
+            let peer_balance = source_sum + curr_tx.amount;
+            
+            if peer_balance != curr_tx.receiver_balance {
+
+                return Ok(ValidateCallbackResult::Invalid(format!("Receiver balance doesn't match peers ({} != {})",
+                    peer_balance,curr_tx.receiver_balance
+                    )))
+            }
+        }    
+
 
     }
 

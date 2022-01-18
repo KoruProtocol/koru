@@ -141,6 +141,8 @@ export default (orchestrator: Orchestrator<any>) =>
     id_to_name[serializeHash(bob_happ.agent)] = "Bob"
     id_to_name[serializeHash(ben_happ.agent)] = "Ben"
 
+    console.log(id_to_name)
+
   
   // single transactions
   // Alice pays Bob
