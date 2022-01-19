@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use crate::utils::extract_tx_from_cs_entry;
 
 
-const CREDIT_LIMIT: f32 = -1000.0; // credit limit is hardcoded for now
+
+const CREDIT_LIMIT: f32 = -10000.0; // credit limit is hardcoded for now
 
 
 
@@ -28,9 +29,12 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
     let author = v.element.header().author().clone();
     
 
+
+    debug!("validating with {} elements",elems.len());
     //validation type: sub_chain provides entry authors source chain entries.
     let mut sums:HashMap<AgentPubKey,f32> = HashMap::new();
     //let mut contents: Vec<Transaction> = vec![];
+    let mut  _i = 0;
     for e in elems {
         let ent= e.entry().as_option();
         let countersign = ent.ok_or(
@@ -39,11 +43,14 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
 
         let tx = extract_tx_from_cs_entry(countersign.clone())?;
 
+        //debug!("validation data@{}:{:?}",i,tx);
+
         let origin = sums.entry(tx.sender.clone()).or_insert(0.0);
         *origin -= tx.amount.clone();
 
         let recip = sums.entry(tx.receiver.clone()).or_insert(0.0);
         *recip += tx.amount.clone();
+        _i+=1;
     }
 
 
@@ -65,7 +72,9 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
             let peer_balance = source_sum - curr_tx.amount;
             if peer_balance != curr_tx.sender_balance {
 
-                return Ok(ValidateCallbackResult::Invalid(format!("Sender balance doesn't match peers ({} != {})",
+
+                debug!("Sender balance mismatch for tx:{:?}. \n Peer balance:{}  \n Validating agent {}",curr_tx,peer_balance, author);
+                return Ok(ValidateCallbackResult::Invalid(format!("Sender balance doesn't match peers (peer {} != tx {})",
                     peer_balance,curr_tx.sender_balance
                     )))
 
@@ -73,24 +82,34 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
 
             if peer_balance < CREDIT_LIMIT {
                 return Ok(ValidateCallbackResult::Invalid(format!("Sender's credit limit of {} exceeded: {}",CREDIT_LIMIT, source_sum - curr_tx.amount)))
+            }else{
+                Ok(ValidateCallbackResult::Valid)
             }
         } else if author == curr_tx.receiver {
             let peer_balance = source_sum + curr_tx.amount;
-            
-            if peer_balance != curr_tx.receiver_balance {
 
-                return Ok(ValidateCallbackResult::Invalid(format!("Receiver balance doesn't match peers ({} != {})",
+            if peer_balance != curr_tx.receiver_balance {
+                debug!("Receiver balance mismatch for tx:{:?} \n Peer balance: {} \n Validating agent {}",curr_tx,peer_balance, author);
+                return Ok(ValidateCallbackResult::Invalid(format!("Receiver balance doesn't match peers (peer {} != tx {})",
                     peer_balance,curr_tx.receiver_balance
                     )))
+            }else {
+                return Ok(ValidateCallbackResult::Valid)
             }
+        }
+        else {
+            return Ok(ValidateCallbackResult::Valid)
         }    
 
 
+    } else{
+        return Ok(ValidateCallbackResult::Valid)
     }
 
     
 
-    Ok(ValidateCallbackResult::Valid)
+    
+    
     
 
    

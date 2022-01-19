@@ -1,3 +1,4 @@
+
 use hdk::prelude::*;
 use std::fmt;
 use crate::utils::{get_sourcechain_balance,get_other_sc_balance};
@@ -6,7 +7,7 @@ use crate::utils::{get_sourcechain_balance,get_other_sc_balance};
 
 
 #[hdk_entry(id = "transaction", 
-required_validations = 2, 
+required_validations = 6, 
 required_validation_type = "sub_chain" )]
 #[derive(Clone)]
 pub struct Transaction{
@@ -54,28 +55,6 @@ pub fn countersign_tx(tx_in:TxInput) -> ExternResult<HeaderHash>{
         receiver_balance: other_balance + tx_in.amount
     };
 
-    /*
-    let entry = match latest_tx {
-        Some(prev_tx) => {
-            Transaction{ //should rename to tx
-                sender: self_pubkey,
-                receiver: tx_in.receiver,
-                amount: tx_in.amount,
-                sender_balance: prev_tx.sender_balance - tx_in.amount,
-                receiver_balance: 0.0
-            }
-        },
-        None => {
-            Transaction{ //should rename to tx
-                sender: self_pubkey,
-                receiver: tx_in.receiver,
-                amount: tx_in.amount,
-                sender_balance: -1.0 * tx_in.amount,
-                receiver_balance: 0.0
-            }
-        }
-    };
-    */
     //  debug!("transaction started {:?}",entry);
 
     //debug!("building preflight");

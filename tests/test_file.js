@@ -1,7 +1,25 @@
 const fs = require('fs')
+const readline = require('readline');
+
+
+const b64 = require('js-base64');
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
+
+function readLineAsync(message) {
+  return new Promise((resolve, reject) => {
+    rl.question(message, (answer) => {
+      resolve(answer);
+    });
+  });
+} 
+
 
 async function main(){
-  let { AdminWebsocket, AppWebsocket, InstalledAppInfo } = await import('@holochain/conductor-api');
+  let { AdminWebsocket, AppWebsocket, InstalledAppInfo } = await import('@holochain/tryorama/node_modules/@holochain/conductor-api');
   let { Base64 } = await import('js-base64')
 
   let a_ports = get_admin_ports();
@@ -27,15 +45,14 @@ async function main(){
       let aws_connection = await AppWebsocket.connect(`ws://localhost:`+(8880+i))
       aws_list.push(aws_connection)
     }
-
-    console.log(aws_list)
     i+=1;
   }
 
 
   console.log("transacting")
   
-  n_trials = 100
+  /*
+  n_trials = 1
   for (let i = 0 ; i < n_trials; i++){
     let a_i = between(0,aws_list.length-1);
     let b_i = between(0,aws_list.length-1);
@@ -49,6 +66,17 @@ async function main(){
     
     await sleep(1000)
   }
+  */
+  var userinput = 0;
+  let res = await call_transaction(aws_list[2],admin_cells[2][0],admin_cells[0],10)
+  
+  userinput = await readLineAsync("Waiting for input: press any key to trigger next transaction \n")
+
+  let res1 = await call_transaction(aws_list[1],admin_cells[1][0],admin_cells[0],20) 
+
+  userinput = await readLineAsync("Waiting for input: press any key to trigger next transaction \n ")
+
+  let res2 = await call_transaction(aws_list[0],admin_cells[0][0],admin_cells[1],30)
 
 
 }
@@ -81,11 +109,12 @@ function sleep(ms) {
   });
 }
 function deserializeHash(hash){
-  return Base64.toUint8Array(hash.slice(1));
+  return b64.toUint8Array(hash.slice(1));
 }
 
 function serializeHash(hash) {
-  return `u${Base64.fromUint8Array(hash, true)}`;
+
+  return `u${b64.fromUint8Array(hash, true)}`;
 }
 
 function between(min, max) {  
@@ -107,6 +136,10 @@ function shuffle(a) {
 async function call_transaction(aws,originator_cell,recipient_cell,amt) {
 
   try{
+    console.log(originator_cell[1])
+    console.log(recipient_cell[0][1])
+    console.log("sender: " + serializeHash(originator_cell[1]))
+    console.log("receiver: " + serializeHash(recipient_cell[0][1]))
     res = await aws.callZome({
       cap: null,
       cell_id: originator_cell,
