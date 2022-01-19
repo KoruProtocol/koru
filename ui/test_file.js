@@ -19,7 +19,7 @@ function readLineAsync(message) {
 
 
 async function main(){
-  let { AdminWebsocket, AppWebsocket, InstalledAppInfo } = await import('@holochain/tryorama/node_modules/@holochain/conductor-api');
+  let { AdminWebsocket, AppWebsocket, InstalledAppInfo } = await import('@holochain/conductor-api');
   let { Base64 } = await import('js-base64')
 
   let a_ports = get_admin_ports();
