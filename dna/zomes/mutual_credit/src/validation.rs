@@ -82,8 +82,6 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
 
             if peer_balance < CREDIT_LIMIT {
                 return Ok(ValidateCallbackResult::Invalid(format!("Sender's credit limit of {} exceeded: {}",CREDIT_LIMIT, source_sum - curr_tx.amount)))
-            }else{
-                Ok(ValidateCallbackResult::Valid)
             }
         } else if author == curr_tx.receiver {
             let peer_balance = source_sum + curr_tx.amount;
@@ -93,22 +91,16 @@ pub fn validate_create_entry_transaction(v:ValidateData) -> ExternResult<Validat
                 return Ok(ValidateCallbackResult::Invalid(format!("Receiver balance doesn't match peers (peer {} != tx {})",
                     peer_balance,curr_tx.receiver_balance
                     )))
-            }else {
-                return Ok(ValidateCallbackResult::Valid)
             }
         }
-        else {
-            return Ok(ValidateCallbackResult::Valid)
-        }    
+     
 
 
-    } else{
-        return Ok(ValidateCallbackResult::Valid)
-    }
+    } 
 
     
 
-    
+    Ok(ValidateCallbackResult::Valid)
     
     
 
