@@ -5,7 +5,7 @@ let
 
   holonixPath = builtins.fetchTarball "https://github.com/holochain/holonix/archive/${holonixRev}.tar.gz";
   holonix = import (holonixPath) {
-    holochainVersionId = "v0_0_120";
+    holochainVersionId = "v0_0_121";
   };
   nixpkgs = holonix.pkgs;
 in nixpkgs.mkShell {
